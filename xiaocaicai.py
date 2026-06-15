@@ -601,12 +601,13 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
     else:
         report += "暂无下发\n"
 
-    report += (
+        report += (
         f"\n <b>总入款:</b> {_tag_rmb(total_rmb)}\n"
         f" <b>费率:</b> {fee_rate * 100:.0f}%\n"
         f" <b>汇率:</b> {rate:.2f}\n\n"
-        f"应下发: {_tag_rmb(total_rmb)} | {total_usdt:.2f} U\n"
-        f"未下发: {_tag_rmb(total_rmb)} | {remaining_usdt:.2f} U\n\n"
+        f"应下发: {total_usdt:.2f} U\n"
+        f"已下发: {expense_usdt:.2f} U\n"
+        f"未下发: {remaining_usdt:.2f} U\n\n"
         f"<code>[核算编号: {random.randint(1000, 9999)}]</code>"
     )
 
@@ -624,7 +625,7 @@ def send_text_bill_report(chat_id, group_id, target_date):
             callback_data=f"bill_cate_{group_id}_{date_key}",
         ))
     markup.add(telebot.types.InlineKeyboardButton(
-        "📊 查看完整网页账单", url=f"{WEBHOOK_URL}/?group_id={group_id}"
+        "💰 查看完整网页账单", url=f"{WEBHOOK_URL}/?group_id={group_id}"
     ))
     try:
         bot.send_message(chat_id, report, parse_mode="HTML", reply_markup=markup)
