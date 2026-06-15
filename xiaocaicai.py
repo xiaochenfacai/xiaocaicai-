@@ -570,8 +570,7 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
         summary[rem]["rmb"] += row[2]
         summary[rem]["usdt"] += row[3]
 
-    report = f"📊 <b>账单汇总 ({target_date})</b>\n"
-    report += f"📥 <b>入款（{len(income)}笔）</b>\n"
+    report += f" <b>入款（{len(income)}笔）</b>\n"
     if income:
         for row in income[-5:]:
             uid = row[7] if len(row) > 7 else None
@@ -579,7 +578,7 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
     else:
         report += "暂无入款\n"
 
-    report += "\n📥 <b>入款备注分类</b>\n"
+    report += "\n <b>入款备注分类</b>\n"
     category_items = list(summary.items())
     visible_categories = category_items if show_all_categories else category_items[:3]
     if visible_categories:
@@ -594,7 +593,7 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
     else:
         report += "<blockquote>暂无分类</blockquote>\n"
 
-    report += f"\n📤 <b>下发（{len(expense)}笔）</b>\n"
+    report += f"\n <b>下发（{len(expense)}笔）</b>\n"
     if expense:
         for row in expense[-5:]:
             uid = row[6] if len(row) > 6 else None
@@ -603,9 +602,9 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
         report += "暂无下发\n"
 
     report += (
-        f"\n💰 <b>总入款:</b> {_tag_rmb(total_rmb)}\n"
-        f"📉 <b>费率:</b> {fee_rate * 100:.0f}%\n"
-        f"💱 <b>汇率:</b> {rate:.2f}\n\n"
+        f"\n <b>总入款:</b> {_tag_rmb(total_rmb)}\n"
+        f" <b>费率:</b> {fee_rate * 100:.0f}%\n"
+        f" <b>汇率:</b> {rate:.2f}\n\n"
         f"应下发: {_tag_rmb(total_rmb)} | {total_usdt:.2f} U\n"
         f"未下发: {_tag_rmb(total_rmb)} | {remaining_usdt:.2f} U\n\n"
         f"<code>[核算编号: {random.randint(1000, 9999)}]</code>"
