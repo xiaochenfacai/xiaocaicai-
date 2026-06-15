@@ -554,13 +554,13 @@ def _format_expense_line(remark, operator, usdt, timestamp, user_id=None):
 
 
 def build_bill_report_text(group_id, target_date, show_all_categories=False):
-    rate = get_setting(group_id, "exchange_rate") or 7.2
-    fee_rate = get_setting(group_id, "fee_rate") or 0.0
+    rate = float(get_setting(group_id, "exchange_rate") or 7.2)
+    fee_rate = float(get_setting(group_id, "fee_rate") or 0.0)
     income, expense, total_income, total_expense = get_class_bills_by_date(group_id, target_date)
 
-    total_rmb = (total_income[0] or 0) if total_income else 0
-    total_usdt = (total_income[1] or 0) if total_income else 0
-    expense_usdt = (total_expense[0] or 0) if total_expense else 0
+    total_rmb = float((total_income[0] or 0) if total_income else 0)
+    total_usdt = float((total_income[1] or 0) if total_income else 0)
+    expense_usdt = float((total_expense[0] or 0) if total_expense else 0)
     remaining_usdt = total_usdt - expense_usdt
 
     summary = {}
@@ -570,15 +570,17 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
         summary[rem]["rmb"] += row[2]
         summary[rem]["usdt"] += row[3]
 
-    report += f" <b>入款（{len(income)}笔）</b>\n"
+    lines = []
+    lines.append(f" <b>入款（{len(income)}笔）</b>")
     if income:
         for row in income[-5:]:
             uid = row[7] if len(row) > 7 else None
-            report += _format_income_line(row[0], row[1], row[2], row[3], row[4], row[5], uid) + "\n"
+            lines.append(_format_income_line(row[0], row[1], row[2], row[3], row[4], row[5], uid))
     else:
-        report += "暂无入款\n"
+        lines.append("暂无入款")
 
-    report += "\n <b>入款备注分类</b>\n"
+    lines.append("")
+    lines.append(" <b>入款备注分类</b>")
     category_items = list(summary.items())
     visible_categories = category_items if show_all_categories else category_items[:3]
     if visible_categories:
@@ -589,30 +591,34 @@ def build_bill_report_text(group_id, target_date, show_all_categories=False):
             else:
                 key_label = "无备注"
             cate_lines.append(f"{key_label} 👉 {_tag_rmb(val['rmb'])}/{val['usdt']:.2f}U")
-        report += f"<blockquote>{chr(10).join(cate_lines)}</blockquote>\n"
+        lines.append(f"<blockquote>{chr(10).join(cate_lines)}</blockquote>")
     else:
-        report += "<blockquote>暂无分类</blockquote>\n"
+        lines.append("<blockquote>暂无分类</blockquote>")
 
-    report += f"\n <b>下发（{len(expense)}笔）</b>\n"
+    lines.append("")
+    lines.append(f" <b>下发（{len(expense)}笔）</b>")
     if expense:
         for row in expense[-5:]:
             uid = row[6] if len(row) > 6 else None
-            report += _format_expense_line(row[0], row[1], row[2], row[4], uid) + "\n"
+            lines.append(_format_expense_line(row[0], row[1], row[2], row[4], uid))
     else:
-        report += "暂无下发\n"
+        lines.append("暂无下发")
 
-        report += (
-        f"\n <b>总入款:</b> {_tag_rmb(total_rmb)}\n"
-        f" <b>费率:</b> {fee_rate * 100:.0f}%\n"
-        f" <b>汇率:</b> {rate:.2f}\n\n"
-        f"应下发: {total_usdt:.2f} U\n"
-        f"已下发: {expense_usdt:.2f} U\n"
-        f"未下发: {remaining_usdt:.2f} U\n\n"
-        f"<code>[核算编号: {random.randint(1000, 9999)}]</code>"
-    )
+    lines.extend([
+        "",
+        f" <b>总入款:</b> {_tag_rmb(total_rmb)}",
+        f" <b>费率:</b> {fee_rate * 100:.0f}%",
+        f" <b>汇率:</b> {rate:.2f}",
+        "",
+        f"应下发: {total_usdt:.2f} U",
+        f"已下发: {expense_usdt:.2f} U",
+        f"未下发: {remaining_usdt:.2f} U",
+        "",
+        f"<code>[核算编号: {random.randint(1000, 9999)}]</code>",
+    ])
 
     has_more_categories = len(category_items) > 3 and not show_all_categories
-    return report, has_more_categories
+    return "\n".join(lines), has_more_categories
 
 
 def send_text_bill_report(chat_id, group_id, target_date):
@@ -625,14 +631,198 @@ def send_text_bill_report(chat_id, group_id, target_date):
             callback_data=f"bill_cate_{group_id}_{date_key}",
         ))
     markup.add(telebot.types.InlineKeyboardButton(
-        "💰 查看完整网页账单", url=f"{WEBHOOK_URL}/?group_id={group_id}"
+        "📊 查看完整网页账单", url=f"{WEBHOOK_URL}/?group_id={group_id}"
     ))
     try:
         bot.send_message(chat_id, report, parse_mode="HTML", reply_markup=markup)
     except Exception as exc:
         log.exception("账单 HTML 发送失败，改用纯文本: %s", exc)
         plain = re.sub(r"<[^>]+>", "", report)
-        bot.send_message(chat_id, plain, reply_markup=markup)
+        try:
+            bot.send_message(chat_id, plain, reply_markup=markup)
+        except Exception as exc2:
+            log.exception("纯文本账单发送失败: %s", exc2)
+            raise exc2 from exc
+
+
+# ---------------------------------------------------------------------------
+# Private chat menu
+# ---------------------------------------------------------------------------
+PRIVATE_MENU_TEXT = {
+    "📅 查看到期时间": "btn_check_expire",
+    "📖 详细说明书": "btn_manual_guide",
+    "💰 自助续费说明": "btn_pay_usdt",
+    "✏️ 改机器人名字": "btn_set_bot_name",
+    "🖼 改机器人头像": "btn_set_bot_photo",
+    "🔑 设置权限人": "btn_grant_vip2",
+    "❌ 取掉权限人": "btn_revoke_vip2",
+}
+
+
+def build_private_reply_keyboard(uid):
+    has_auth, _, _, lvl = get_user_permission_level(uid)
+    kb = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add("📅 查看到期时间", "📖 详细说明书")
+    kb.add("💰 自助续费说明")
+    if uid in FOUNDER_USERS or (has_auth and lvl == 1):
+        kb.add("✏️ 改机器人名字", "🖼 改机器人头像")
+        kb.add("🔑 设置权限人", "❌ 取掉权限人")
+    kb.add("🏠 主菜单")
+    return kb
+
+
+def build_private_inline_markup(uid):
+    has_auth, _, _, lvl = get_user_permission_level(uid)
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        telebot.types.InlineKeyboardButton("📅 查看到期时间", callback_data="btn_check_expire"),
+        telebot.types.InlineKeyboardButton("📖 详细说明书", callback_data="btn_manual_guide"),
+    )
+    markup.add(telebot.types.InlineKeyboardButton("💰 自助续费说明", callback_data="btn_pay_usdt"))
+    if uid in FOUNDER_USERS or (has_auth and lvl == 1):
+        markup.add(
+            telebot.types.InlineKeyboardButton("🔑 设置权限人", callback_data="btn_grant_vip2"),
+            telebot.types.InlineKeyboardButton("❌ 取掉权限人", callback_data="btn_revoke_vip2"),
+        )
+        markup.add(
+            telebot.types.InlineKeyboardButton("✏️ 改机器人名字", callback_data="btn_set_bot_name"),
+            telebot.types.InlineKeyboardButton("🖼 改机器人头像", callback_data="btn_set_bot_photo"),
+        )
+    return markup
+
+
+def send_private_welcome(chat_id, uid):
+    _, lvl_desc, _, _ = get_user_permission_level(uid)
+    bot.send_message(
+        chat_id,
+        f"🤖 <b>您好！欢迎使用{BOT_BRAND}分布式管理中心</b>\n\n"
+        f"👤 <b>当前身份：</b> <code>{lvl_desc}</code>\n"
+        f"📌 请用<b>输入框下方常驻菜单</b>，或消息里的按钮操作：",
+        parse_mode="HTML",
+        reply_markup=build_private_reply_keyboard(uid),
+    )
+    bot.send_message(
+        chat_id,
+        "👇 也可点这里快捷操作：",
+        reply_markup=build_private_inline_markup(uid),
+    )
+
+
+def process_private_menu(uid, chat_id, action):
+    """处理私聊菜单动作。返回 alert 文案表示权限不足等提示。"""
+    has_auth, lvl_desc, expire_time, lvl = get_user_permission_level(uid)
+
+    if action == "btn_check_expire":
+        status = "🟢 正常生效中" if has_auth else "🔴 资质已过期/未激活"
+        bot.send_message(
+            chat_id,
+            f"👤 <b>您的身份体系：</b>\n"
+            f"• 级别：<code>{lvl_desc}</code>\n"
+            f"• 状态：{status}\n"
+            f"• 有效截止期：<code>{expire_time}</code>",
+            parse_mode="HTML",
+        )
+        return None
+
+    if action == "btn_manual_guide":
+        bot.send_message(
+            chat_id,
+            f"📖 <b>【{BOT_BRAND}】全功能业务操作指南</b>\n\n"
+            f"🤖 欢迎使用 <b>{BOT_NAME}</b> 机器人，以下为常用指令：\n\n"
+            "👑 <b>权限架构：</b>\n"
+            "1. <b>最高级买家</b>：私聊菜单，可改机器人名字/头像，可指派二级权限人。\n"
+            "2. <b>权限人(VIP2)</b>：可进群指派群操作人。\n"
+            "3. <b>操作人</b>：群内专职记账。\n\n"
+            "👥 <b>群内指令集：</b>\n"
+            "• <code>设置操作人 @用户名</code>\n"
+            "• <code>取掉操作人 @用户名</code>\n"
+            "• <code>设置汇率 7.4</code>\n"
+            "• <code>+5000/7.3 飞机备注</code>\n"
+            "• <code>下发 800</code>\n"
+            "• <code>+0</code>\n\n"
+            "🎨 <b>买家专属（私聊菜单）：</b>\n"
+            "• <b>改机器人名字</b> / <b>改机器人头像</b>（仅最高级买家）",
+            parse_mode="HTML",
+        )
+        return None
+
+    if action == "btn_set_bot_name":
+        if not can_customize_bot(uid):
+            return "仅最高级买家可修改机器人名字。"
+        USER_STATE[uid] = "WAITING_BOT_NAME"
+        bot.send_message(
+            chat_id,
+            "✏️ 请直接发送新的<b>机器人显示名字</b>（最多 64 字）：\n"
+            "例如：<code>小财家记账</code>",
+            parse_mode="HTML",
+        )
+        return None
+
+    if action == "btn_set_bot_photo":
+        if not can_customize_bot(uid):
+            return "仅最高级买家可修改机器人头像。"
+        USER_STATE[uid] = "WAITING_BOT_PHOTO"
+        bot.send_message(
+            chat_id,
+            "🖼 请直接发一张图片给我（截图、logo、照片都可以）。\n\n"
+            "我会<b>自动裁成正方形</b>并优化成头像尺寸，再帮你换上。",
+            parse_mode="HTML",
+        )
+        return None
+
+    if action == "btn_pay_usdt":
+        bot.send_message(
+            chat_id,
+            f"💰 <b>USDT 授权价格套餐：</b>\n"
+            f"• 1 个月高级买家：<b>{PRICE_1_MONTH}</b> USDT\n"
+            f"• 2 个月高级买家：<b>{PRICE_2_MONTH}</b> USDT\n"
+            f"• 3 个月高级买家：<b>{PRICE_3_MONTH}</b> USDT\n\n"
+            f"💎 <b>官方波场(TRC20)收款地址：</b>\n<code>{TRON_ADDRESS}</code>\n\n"
+            f"⚠️ 转账成功后，请将【成功截图凭证】私发给机器人，创始人审核后开通。",
+            parse_mode="HTML",
+        )
+        return None
+
+    if action == "btn_grant_vip2":
+        if uid not in FOUNDER_USERS and lvl != 1:
+            return "只有最高级买家才能指派二级权限人。"
+        if get_level2_vip_count() >= MAX_LEVEL2_VIPS:
+            bot.send_message(
+                chat_id,
+                f"❌ 当前已满 <b>{MAX_LEVEL2_VIPS}</b> 个二级权限人，请先移除旧成员。",
+                parse_mode="HTML",
+            )
+        else:
+            USER_STATE[uid] = "WAITING_ADD_VIP2"
+            bot.send_message(
+                chat_id,
+                "➡️ 请直接输入要授权的二级权限人 <b>UID（纯数字）</b>：",
+                parse_mode="HTML",
+            )
+        return None
+
+    if action == "btn_revoke_vip2":
+        if uid not in FOUNDER_USERS and lvl != 1:
+            return "只有最高级买家才能撤销二级权限人。"
+        vip_list = get_all_level2_vips()
+        if not vip_list:
+            bot.send_message(chat_id, "📭 您还没有设置任何二级权限人。", parse_mode="HTML")
+        else:
+            lines = [
+                f"👤 <b>{name}</b> | UID: <code>{vid}</code>"
+                for vid, name in vip_list
+            ]
+            USER_STATE[uid] = "WAITING_DEL_VIP2"
+            bot.send_message(
+                chat_id,
+                f"📋 <b>二级权限人 ({len(vip_list)}/{MAX_LEVEL2_VIPS})</b>\n\n"
+                + "\n".join(lines)
+                + "\n\n➡️ 请发送要移除的 UID（纯数字）：",
+                parse_mode="HTML",
+            )
+        return None
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -642,30 +832,7 @@ def send_text_bill_report(chat_id, group_id, target_date):
 def cmd_start(message):
     uid = message.from_user.id
     if message.chat.type == "private":
-        has_auth, lvl_desc, _, lvl = get_user_permission_level(uid)
-        markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            telebot.types.InlineKeyboardButton("📅 查看到期时间", callback_data="btn_check_expire"),
-            telebot.types.InlineKeyboardButton("📖 详细说明书", callback_data="btn_manual_guide"),
-        )
-        markup.add(telebot.types.InlineKeyboardButton("💰 自助续费说明", callback_data="btn_pay_usdt"))
-        if uid in FOUNDER_USERS or (has_auth and lvl == 1):
-            markup.add(
-                telebot.types.InlineKeyboardButton("🔑 设置权限人", callback_data="btn_grant_vip2"),
-                telebot.types.InlineKeyboardButton("❌ 取掉权限人", callback_data="btn_revoke_vip2"),
-            )
-            markup.add(
-                telebot.types.InlineKeyboardButton("✏️ 改机器人名字", callback_data="btn_set_bot_name"),
-                telebot.types.InlineKeyboardButton("🖼 改机器人头像", callback_data="btn_set_bot_photo"),
-            )
-        bot.send_message(
-            message.chat.id,
-            f"🤖 <b>您好！欢迎使用{BOT_BRAND}分布式管理中心</b>\n\n"
-            f"👤 <b>当前身份：</b> <code>{lvl_desc}</code>\n"
-            f"📌 请通过下方菜单按纽执行管理操作：",
-            parse_mode="HTML",
-            reply_markup=markup,
-        )
+        send_private_welcome(message.chat.id, uid)
     else:
         bot.send_message(
             message.chat.id,
@@ -690,118 +857,11 @@ def cmd_start(message):
 # ---------------------------------------------------------------------------
 @bot.callback_query_handler(func=lambda call: call.data.startswith("btn_"))
 def handle_private_buttons(call):
-    uid = call.from_user.id
-    has_auth, lvl_desc, expire_time, lvl = get_user_permission_level(uid)
-    chat_id = call.message.chat.id
-
-    if call.data == "btn_check_expire":
-        status = "🟢 正常生效中" if has_auth else "🔴 资质已过期/未激活"
-        bot.send_message(
-            chat_id,
-            f"👤 <b>您的身份体系：</b>\n"
-            f"• 级别：<code>{lvl_desc}</code>\n"
-            f"• 状态：{status}\n"
-            f"• 有效截止期：<code>{expire_time}</code>",
-            parse_mode="HTML",
-        )
-
-    elif call.data == "btn_manual_guide":
-        bot.send_message(
-            chat_id,
-            f"📖 <b>【{BOT_BRAND}】全功能业务操作指南</b>\n\n"
-            f"🤖 欢迎使用 <b>{BOT_NAME}</b> 机器人，以下为常用指令：\n\n"
-            "👑 <b>权限架构：</b>\n"
-            "1. <b>最高级买家</b>：私聊菜单，可改机器人名字/头像，可指派二级权限人。\n"
-            "2. <b>权限人(VIP2)</b>：可进群指派群操作人。\n"
-            "3. <b>操作人</b>：群内专职记账。\n\n"
-            "👥 <b>群内指令集：</b>\n"
-            "• <code>设置操作人 @用户名</code>\n"
-            "• <code>取掉操作人 @用户名</code>\n"
-            "• <code>设置汇率 7.4</code>\n"
-            "• <code>+5000/7.3 飞机备注</code>\n"
-            "• <code>下发 800</code>\n"
-            "• <code>+0</code>\n\n"
-            "🎨 <b>买家专属（私聊菜单）：</b>\n"
-            "• <b>改机器人名字</b> / <b>改机器人头像</b>（仅最高级买家）",
-            parse_mode="HTML",
-        )
-
-    elif call.data == "btn_set_bot_name":
-        if not can_customize_bot(uid):
-            bot.answer_callback_query(call.id, "仅最高级买家可修改机器人名字。", show_alert=True)
-            return
-        USER_STATE[uid] = "WAITING_BOT_NAME"
-        bot.send_message(
-            chat_id,
-            "✏️ 请直接发送新的<b>机器人显示名字</b>（最多 64 字）：\n"
-            "例如：<code>小财家记账</code>",
-            parse_mode="HTML",
-        )
-
-    elif call.data == "btn_set_bot_photo":
-        if not can_customize_bot(uid):
-            bot.answer_callback_query(call.id, "仅最高级买家可修改机器人头像。", show_alert=True)
-            return
-        USER_STATE[uid] = "WAITING_BOT_PHOTO"
-        bot.send_message(
-            chat_id,
-            "🖼 请直接发一张图片给我（截图、logo、照片都可以）。\n\n"
-            "我会<b>自动裁成正方形</b>并优化成头像尺寸，再帮你换上。",
-            parse_mode="HTML",
-        )
-
-    elif call.data == "btn_pay_usdt":
-        bot.send_message(
-            chat_id,
-            f"💰 <b>USDT 授权价格套餐：</b>\n"
-            f"• 1 个月高级买家：<b>{PRICE_1_MONTH}</b> USDT\n"
-            f"• 2 个月高级买家：<b>{PRICE_2_MONTH}</b> USDT\n"
-            f"• 3 个月高级买家：<b>{PRICE_3_MONTH}</b> USDT\n\n"
-            f"💎 <b>官方波场(TRC20)收款地址：</b>\n<code>{TRON_ADDRESS}</code>\n\n"
-            f"⚠️ 转账成功后，请将【成功截图凭证】私发给机器人，创始人审核后开通。",
-            parse_mode="HTML",
-        )
-
-    elif call.data == "btn_grant_vip2":
-        if uid not in FOUNDER_USERS and lvl != 1:
-            bot.answer_callback_query(call.id, "只有最高级买家才能指派二级权限人。", show_alert=True)
-            return
-        if get_level2_vip_count() >= MAX_LEVEL2_VIPS:
-            bot.send_message(
-                chat_id,
-                f"❌ 当前已满 <b>{MAX_LEVEL2_VIPS}</b> 个二级权限人，请先移除旧成员。",
-                parse_mode="HTML",
-            )
-        else:
-            USER_STATE[uid] = "WAITING_ADD_VIP2"
-            bot.send_message(
-                chat_id,
-                "➡️ 请直接输入要授权的二级权限人 <b>UID（纯数字）</b>：",
-                parse_mode="HTML",
-            )
-
-    elif call.data == "btn_revoke_vip2":
-        if uid not in FOUNDER_USERS and lvl != 1:
-            bot.answer_callback_query(call.id, "只有最高级买家才能撤销二级权限人。", show_alert=True)
-            return
-        vip_list = get_all_level2_vips()
-        if not vip_list:
-            bot.send_message(chat_id, "📭 您还没有设置任何二级权限人。", parse_mode="HTML")
-        else:
-            lines = [
-                f"👤 <b>{name}</b> | UID: <code>{vid}</code>"
-                for vid, name in vip_list
-            ]
-            USER_STATE[uid] = "WAITING_DEL_VIP2"
-            bot.send_message(
-                chat_id,
-                f"📋 <b>二级权限人 ({len(vip_list)}/{MAX_LEVEL2_VIPS})</b>\n\n"
-                + "\n".join(lines)
-                + "\n\n➡️ 请发送要移除的 UID（纯数字）：",
-                parse_mode="HTML",
-            )
-
-    bot.answer_callback_query(call.id)
+    alert = process_private_menu(call.from_user.id, call.message.chat.id, call.data)
+    if alert:
+        bot.answer_callback_query(call.id, alert, show_alert=True)
+    else:
+        bot.answer_callback_query(call.id)
 
 
 @bot.my_chat_member_handler()
@@ -927,7 +987,7 @@ def handle_bill_category_more(call):
     report, _ = build_bill_report_text(group_id, target_date, show_all_categories=True)
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton(
-        "📊 查看完整网页账单", url=f"{WEBHOOK_URL}/?group_id={group_id}"
+        "💰 查看完整网页账单", url=f"{WEBHOOK_URL}/?group_id={group_id}"
     ))
     try:
         bot.edit_message_text(
@@ -958,6 +1018,19 @@ def handle_all_messages(message):
 
     # --- private chat ---
     if message.chat.type == "private":
+        if text == "🏠 主菜单":
+            USER_STATE.pop(uid, None)
+            send_private_welcome(gid, uid)
+            return
+
+        menu_action = PRIVATE_MENU_TEXT.get(text)
+        if menu_action:
+            USER_STATE.pop(uid, None)
+            alert = process_private_menu(uid, gid, menu_action)
+            if alert:
+                bot.reply_to(message, f"⚠️ {alert}")
+            return
+
         state = USER_STATE.pop(uid, None)
         if state == "WAITING_BOT_NAME":
             if not can_customize_bot(uid):
@@ -1006,15 +1079,6 @@ def handle_all_messages(message):
                     pass
             else:
                 bot.reply_to(message, "❌ 未找到该二级权限人，或移除失败。")
-            return
-
-        if text == "查看到期时间":
-            _, lvl_desc, expire_time, _ = get_user_permission_level(uid)
-            bot.reply_to(
-                message,
-                f"👤 身份：<code>{lvl_desc}</code>\n📅 到期：<code>{expire_time}</code>",
-                parse_mode="HTML",
-            )
             return
 
     # --- chain lookup (any chat) ---
@@ -1152,14 +1216,14 @@ def handle_all_messages(message):
         if not rows:
             bot.reply_to(message, f"🔍 今日无备注【{remark}】的进单。")
             return
-        report = f"📋 <b>{_tag_remark(remark).strip()}进单明细</b>\n"
+        detail_lines = [f"📋 <b>{_tag_remark(remark).strip()}进单明细</b>"]
         total_r, total_u = 0.0, 0.0
         for ts, amt, uamt, uname in rows:
-            report += f"{ts[11:16]} {_tag_rmb(amt)} RMB→{uamt:.1f}U {_tag_operator(uname)}\n"
+            detail_lines.append(f"{ts[11:16]} {_tag_rmb(amt)} RMB→{uamt:.1f}U {_tag_operator(uname)}")
             total_r += amt
             total_u += uamt
-        report += f"合计 {_tag_rmb(total_r)} RMB / {total_u:.1f} USDT"
-        bot.reply_to(message, report, parse_mode="HTML")
+        detail_lines.append(f"合计 {_tag_rmb(total_r)} RMB / {total_u:.1f} USDT")
+        bot.reply_to(message, "\n".join(detail_lines), parse_mode="HTML")
         return
 
     if text == "上课":
@@ -1446,7 +1510,24 @@ def webhook():
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+def setup_bot_commands():
+    """注册 /start 到 Telegram 输入框左侧 Menu（☰）里。"""
+    commands = [
+        telebot.types.BotCommand("start", "打开主菜单"),
+        telebot.types.BotCommand("help", "使用帮助"),
+    ]
+    try:
+        bot.set_my_commands(commands, scope=telebot.types.BotCommandScopeDefault())
+        bot.set_my_commands(commands, scope=telebot.types.BotCommandScopeAllPrivateChats())
+        bot.set_chat_menu_button(menu_button=telebot.types.MenuButtonCommands())
+        me = bot.get_me()
+        log.info("Bot menu OK (@%s): /start, /help", me.username)
+    except Exception as exc:
+        log.exception("注册 Bot 左侧 Menu 失败: %s", exc)
+
+
 def setup_webhook():
+    setup_bot_commands()
     try:
         bot.remove_webhook()
         ok = bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
